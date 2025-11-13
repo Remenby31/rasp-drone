@@ -85,7 +85,8 @@ class INavDrone:
         self.armed: bool = False
 
         # RC (1000–2000 µs)
-        self.rc_channels: Dict[int, int] = {i: 1500 for i in range(1, 9)}  # 8 canaux par défaut
+        self.rc_channels: Dict[int, int] = {i: 1500 for i in range(1, 9)}  # 8 canaux lus du FC
+        self._rc_channels_tx: Dict[int, int] = {i: 1500 for i in range(1, 9)}  # 8 canaux à envoyer
         self._rc_override_enabled = False  # Active la transmission continue MSP_SET_RAW_RC
 
     # ------------- Connexion / boucle de télémétrie -------------
@@ -200,7 +201,7 @@ class INavDrone:
             raise RuntimeError("Port série non ouvert")
 
         length = len(payload)
-        header = b'$M>'
+        header = b'$M<'  # Requête client -> FC
         body = bytes([length, cmd]) + payload
         checksum = 0
         for b in body:
@@ -217,43 +218,51 @@ class INavDrone:
             raise RuntimeError("Port série non ouvert")
 
         self._ser.timeout = timeout
+        start_time = time.time()
 
-        # Cherche header '$M<'
-        start = b''
-        while start != b'$M<':
-            ch = self._ser.read(1)
-            if not ch:
-                raise TimeoutError("Timeout MSP en lisant header")
-            start = (start + ch)[-3:]
+        while True:
+            # Vérifier timeout global
+            if time.time() - start_time > timeout:
+                raise TimeoutError("Timeout MSP global")
 
-        # longueur + cmd
-        length_bytes = self._ser.read(1)
-        cmd_bytes = self._ser.read(1)
-        if len(length_bytes) < 1 or len(cmd_bytes) < 1:
-            raise TimeoutError("Timeout MSP longueur/cmd")
+            # Cherche header '$M>' (réponse FC -> client)
+            start = b''
+            while start != b'$M>':
+                ch = self._ser.read(1)
+                if not ch:
+                    raise TimeoutError("Timeout MSP en lisant header")
+                start = (start + ch)[-3:]
 
-        length = length_bytes[0]
-        cmd = cmd_bytes[0]
+            # longueur + cmd
+            length_bytes = self._ser.read(1)
+            cmd_bytes = self._ser.read(1)
+            if len(length_bytes) < 1 or len(cmd_bytes) < 1:
+                raise TimeoutError("Timeout MSP longueur/cmd")
 
-        payload = self._ser.read(length)
-        if len(payload) < length:
-            raise TimeoutError("Timeout MSP payload")
+            length = length_bytes[0]
+            cmd = cmd_bytes[0]
 
-        checksum_rx = self._ser.read(1)
-        if len(checksum_rx) < 1:
-            raise TimeoutError("Timeout MSP checksum")
+            payload = self._ser.read(length)
+            if len(payload) < length:
+                raise TimeoutError("Timeout MSP payload")
 
-        checksum_calc = 0
-        for b in (length_bytes + cmd_bytes + payload):
-            checksum_calc ^= b
-        if checksum_calc != checksum_rx[0]:
-            raise ValueError("Checksum MSP invalide")
+            checksum_rx = self._ser.read(1)
+            if len(checksum_rx) < 1:
+                raise TimeoutError("Timeout MSP checksum")
 
-        if expected_cmd is not None and cmd != expected_cmd:
-            # On pourrait ignorer ou rebuffer ; ici on lève
-            raise ValueError(f"MSP cmd inattendu: {cmd}, attendu {expected_cmd}")
+            checksum_calc = 0
+            for b in (length_bytes + cmd_bytes + payload):
+                checksum_calc ^= b
+            if checksum_calc != checksum_rx[0]:
+                # Checksum invalide, ignorer et continuer
+                continue
 
-        return cmd, payload
+            # Si on attend une commande spécifique et ce n'est pas la bonne, ignorer
+            if expected_cmd is not None and cmd != expected_cmd:
+                # Ignorer cette réponse et continuer à chercher
+                continue
+
+            return cmd, payload
 
     def _msp_request(self, cmd: int, timeout: float = 0.2) -> bytes:
         """Envoie une requête MSP (payload vide) et lit la réponse."""
@@ -341,9 +350,9 @@ class INavDrone:
         Args:
             channels: Dictionnaire {canal: valeur}, ex: {1: 1500, 5: 2000}
         """
-        # Mets à jour notre état local
+        # Mets à jour notre état TX (à envoyer)
         for ch, val in channels.items():
-            self.rc_channels[ch] = val
+            self._rc_channels_tx[ch] = val
 
         # Si le override n'est pas activé, envoyer immédiatement (mode legacy)
         if not self._rc_override_enabled:
@@ -355,9 +364,9 @@ class INavDrone:
         Appelé automatiquement par _rc_loop si RC override est activé.
         """
         # MSP_SET_RAW_RC envoie 8 canaux (min) en uint16 LE
-        max_ch = max(self.rc_channels.keys())
+        max_ch = max(self._rc_channels_tx.keys())
         n = max(8, max_ch)  # on envoie au moins 8
-        values = [self.rc_channels.get(i, 1500) for i in range(1, n + 1)]
+        values = [self._rc_channels_tx.get(i, 1500) for i in range(1, n + 1)]
         payload = struct.pack('<' + 'H' * n, *values)
         self._msp_send(self.MSP_SET_RAW_RC, payload)
 

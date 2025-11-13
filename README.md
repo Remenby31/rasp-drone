@@ -79,26 +79,25 @@ Redémarrez le Raspberry Pi après cette configuration.
 
 ### Configuration INAV - MSP RX (CRITIQUE)
 
-Pour que le contrôle MSP fonctionne, vous DEVEZ configurer INAV pour accepter MSP comme source RC :
+**⚠️ Configuration obligatoire pour le contrôle MSP :**
 
-#### Option 1 : MSP RX (Recommandé pour contrôle total)
-
-Dans l'onglet **Ports** de INAV Configurator :
-- Activez **MSP** sur le port UART connecté au Raspberry Pi
-
-Dans la **CLI** :
-```
-set serialrx_provider = MSP
+Dans iNAV Configurator CLI, tapez :
+```bash
+set receiver_type = MSP
+set nav_extra_arming_safety = ALLOW_BYPASS
+feature VCP
+set enable_pwm_output = ON
+aux 1 0 0 1700 2100    # ARM sur CH5
+aux 1 51 0 1700 2100   # PREARM sur CH5
 save
 ```
 
-Cela configure INAV pour utiliser MSP comme source RC principale.
+**Pour plus de détails, consultez `docs/INAV_CLI_SETUP.md`**
 
-#### Option 2 : MSP Override (Versions récentes d'iNav)
-
-Certaines versions récentes d'iNav supportent le "MSP Override" qui permet d'overrider certains canaux via MSP tout en gardant un RX classique.
-
-**IMPORTANT** : iNav requiert que `MSP_SET_RAW_RC` soit envoyé **en continu à ≥5Hz** pour éviter le failsafe RC. Ce code le fait automatiquement via la méthode `enable_rc_override()`.
+**IMPORTANT** :
+- iNav requiert que `MSP_SET_RAW_RC` soit envoyé **en continu à ≥5Hz**
+- Ce code le fait automatiquement via `enable_rc_override()`
+- `enable_pwm_output = ON` est CRITIQUE pour faire tourner les moteurs
 
 ### Configuration des modes de vol
 
@@ -197,9 +196,22 @@ drone.disconnect()
 
 ```
 rasp-drone/
-├── inav_drone .py      # Classe principale INavDrone
-├── main_basic.py       # Exemple d'utilisation
-└── README.md           # Ce fichier
+├── inav_drone.py           # Classe principale INavDrone
+├── send_cli_command.py     # Script pour envoyer des commandes CLI
+├── docs/                   # Documentation
+│   ├── CLAUDE.md          # Journal de développement et découvertes
+│   ├── CLI_USAGE.md       # Guide d'utilisation du CLI
+│   ├── INAV_CLI_SETUP.md  # Configuration CLI complète
+│   └── INAV_CONFIGURATION.md  # Configuration iNAV
+├── examples/               # Scripts d'exemple
+│   ├── main_basic.py      # Exemple basique
+│   └── ...
+├── tests/                  # Scripts de test
+│   ├── test_arm_clean.py  # Test d'armement
+│   ├── test_motors_gentle.py  # Test moteurs
+│   ├── test_connection.py # Test connexion
+│   └── ...
+└── README.md              # Ce fichier
 ```
 
 ## Architecture
